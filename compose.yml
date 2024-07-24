@@ -1,0 +1,100 @@
+services:
+  db:
+    image: postgres:alpine
+    restart: always
+    volumes:
+      - db:/var/lib/postgresql/data:Z
+    environment:
+      - POSTGRES_DB_FILE=/run/secrets/postgres_db
+      - POSTGRES_USER_FILE=/run/secrets/postgres_user
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+    secrets:
+      - postgres_db
+      - postgres_user
+      - postgres_password
+  redis:
+    image: redis:alpine
+    restart: always
+  app:
+    image: nextcloud:fpm-alpine
+    restart: always
+    volumes:
+      - nextcloud:/var/www/html:z
+    environment:
+      - POSTGRES_HOST=db
+      - REDIS_HOST=redis
+      - POSTGRES_DB_FILE=/run/secrets/postgres_db
+      - POSTGRES_USER_FILE=/run/secrets/postgres_user
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+    secrets:
+      - postgres_db
+      - postgres_user
+      - postgres_password
+    depends_on:
+      - db
+      - redis
+  web:
+    image: nginx:alpine
+    restart: always
+    volumes:
+      - nextcloud:/var/www/html:z,ro
+      - ./web/nginx.conf:/etc/nginx/nginx.conf:z,ro
+    environment:
+      - VIRTUAL_HOST=bocchitherock.com
+      - LETSENCRYPT_HOST=bocchitherock.com
+      - LETSENCRYPT_EMAIL=bocchi@therock.com
+    depends_on:
+      - app
+    networks:
+      - proxy
+      - default
+  cron:
+    image: nextcloud:fpm-alpine
+    restart: always
+    volumes:
+      - nextcloud:/var/www/html:z
+    entrypoint: /cron.sh
+    depends_on:
+      - db
+      - redis
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:alpine
+    labels:
+      - com.github.nginx-proxy.nginx
+    restart: always
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - certs:/etc/nginx/certs:z
+      - html:/usr/share/nginx/html:z
+      - /var/run/docker.sock:/tmp/docker.sock:z,ro
+      - ./nginx-proxy/uploadsize.conf:/etc/nginx/conf.d/uploadsize.conf:Z,ro
+    networks:
+      - proxy
+  letsencrypt-companion:
+    image: nginxproxy/acme-companion
+    volumes:
+      - acme:/etc/acme.sh:z
+      - certs:/etc/nginx/certs:z
+      - html:/usr/share/nginx/html:z
+      - /var/run/docker.sock:/var/run/docker.sock:z,ro
+    networks:
+      - proxy
+    depends_on:
+      - nginx-proxy
+volumes:
+  db:
+  nextcloud:
+  certs:
+  acme:
+  html:
+networks:
+  proxy:
+secrets:
+  postgres_db:
+    file: ./secrets/postgres_db.txt
+  postgres_user:
+    file: ./secrets/postgres_user.txt
+  postgres_password:
+    file: ./secrets/postgres_password.txt
